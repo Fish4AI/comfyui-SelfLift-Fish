@@ -23,8 +23,21 @@ Recorded on an **RTX 5070 Ti 16 GB with 128 GB system RAM**, using a native INT8
 | --- | --- | --- | --- |
 | 15 seconds | 1376 × 768, 1.0 MP selector | 5m 27s – 5m 32s, three runs | Success |
 | **20 seconds** | **1376 × 768, 1.0 MP selector** | **7m 49s / 8m 12s, two runs** | **Success** |
+| **15 seconds** | **1920 × 1088, 2.0 MP selector** | **14m 08s** | **Completed in the execution log** |
 
-These are complete workflow execution times from ComfyUI history, not single-layer estimates. They are individual successful runs with different content, not a controlled speed comparison. A separate earlier global-context build also completed a 10-second, 1920 × 1088 workflow in 27m 50s; that is a different workload and build.
+These are complete workflow execution times from ComfyUI history and logs, not single-layer estimates. They are individual completed runs with different content, not a controlled speed comparison.
+
+### 2.0 MP: higher-resolution generation and recorded improvement
+
+The same 16 GB GPU also completed **15 seconds at 1920 × 1088**, with **219709 packed tokens**. The optimized upscaler's complete transition lift took **10.408 s**; the four target-resolution steps took **157.913 / 101.975 / 112.816 / 100.402 s**, and the complete workflow took **14m 08s**.
+
+| 1920 × 1088 run | Whole workflow | Target-resolution stage |
+| --- | ---: | ---: |
+| Early global build, 10 seconds | 27m 50s | 1322.042 s |
+| Optimized stream, before the Conv3d upscaler fix, 10 seconds | **12m 55s** | **249.757 s** |
+| Stream + upscaler fix, longer 15-second video | **14m 08s** | 477.195 s |
+
+For the two 10-second records, observed whole-workflow time fell by about **54%** (about **2.15×** the recorded throughput), and the target-resolution stage by about **81%**. These compare development runs of this project, not facok's unmodified sampler; prompts, references, cache state and runtime conditions were not held fixed. The 15-second result demonstrates the larger workload and is not used to calculate those percentages. See [the 2.0 MP measurement details](docs/BENCHMARKS.md#a2-20-mp-high-resolution-results).
 
 The recorded long-video results use substantial system RAM and DynamicVRAM offloading. “16 GB” describes the tested GPU capacity, not a claim that the whole model and workflow fit in 16 GB without offloading. Other GPUs, RAM capacities, models, references, attention settings and video contents can change the result.
 

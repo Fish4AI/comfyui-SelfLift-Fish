@@ -29,13 +29,49 @@ and reflect its cache/load state; they do not include time waiting in a queue.
 
 The owner's earlier controlled visual comparison confirmed that the global
 path resolved the reproduced spatial-tiling background deformation. The six
-successful runs above were checked for execution success, not independently
+successful 1.0 MP runs above were checked for execution success, not independently
 scored for background quality. A paired visual benchmark is not bundled.
 
-No complete-run VRAM peak is available for these latest six runs. The 16 GB GPU
-capacity is known; the isolated allocator measurements below must not be
-substituted for whole-workflow peaks. The system had 128 GB host RAM and used
-DynamicVRAM offloading; smaller-RAM systems were not validated.
+No complete-run VRAM peak is available for these latest real-video runs. The
+16 GB GPU capacity is known; the isolated allocator measurements below must not
+be substituted for whole-workflow peaks. The system had 128 GB host RAM and
+used DynamicVRAM offloading; smaller-RAM systems were not validated.
+
+### A2. 2.0 MP high-resolution results
+
+The same machine also completed a **15-second, 1920 × 1088** workflow after the
+stream and upscaler fixes. The log records 107 temporal latent positions,
+target latent grid 68 × 120 and 219709 packed tokens. Configuration: ten Euler
+evaluations split 6/4, scale 0.60, cfg 1, `rho=0`, external H3 upscaler,
+native sparse attention, Global stream, chunk 4096, weight budget 4 GiB.
+
+| Measurement | Earlier global, 10 s | Optimized stream before upscaler fix, 10 s | Stream + upscaler fix, 15 s |
+| --- | ---: | ---: | ---: |
+| Target pixels | 1920 × 1088 | 1920 × 1088 | 1920 × 1088 |
+| Temporal latent positions | 72 | 72 | 107 |
+| Whole workflow | 1670 s (27m 50s) | 775 s (12m 55s) | 848 s (14m 08s) |
+| Complete `paired_lifts` | not separately recorded here | 281.854 s | 10.408 s |
+| Target-resolution step 1 | 209.450 s | 75.147 s | 157.913 s |
+| Target-resolution step 2 | 732.072 s | 60.351 s | 101.975 s |
+| Target-resolution step 3 | 188.878 s | 55.895 s | 112.816 s |
+| Target-resolution step 4 | 189.378 s | 55.888 s | 100.402 s |
+| Target-resolution stage total | 1322.042 s | 249.757 s | 477.195 s |
+
+For the two **10-second** records, the observed complete workflow dropped
+53.6% (1670/775 ≈ 2.15× recorded throughput), and the target-resolution stage
+dropped 81.1% (1322.042/249.757 ≈ 5.29×). These are development-run observations
+at the same duration and target dimensions, not a paired same-prompt,
+same-seed benchmark or a comparison with facok's unmodified spatial tiling.
+Prompt/reference token packing, caching, load state and runtime conditions can
+contribute. Do not use the different-length 15-second run to calculate those
+ratios or compare its 10.408-second lift directly with the shorter run's lift
+as an isolated-kernel speedup.
+
+Sources: the earlier collector result and execution logs on 2026-10-19,
+07:38:27–07:51:12 for the 10-second stream run, and
+10:07:30–10:21:34 for the 15-second updated run. The latter logged the complete
+ten-step sampling, VAE loading and `Prompt executed in 00:14:08`; no full-run
+resource collector was active. These do not establish a complete-run VRAM peak.
 
 ## B. Same-checkpoint upscaler comparison
 
