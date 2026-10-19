@@ -74,7 +74,7 @@
    git clone https://github.com/Fish4AI/comfyui-SelfLift-Fish.git
    ```
 
-   当前为私有仓库，需要有访问权限的 GitHub 登录。
+   仓库已公开，使用 HTTPS 克隆无需登录 GitHub。
 4. 将 [H3 latent 放大器](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler) 权重放到 `ComfyUI/models/latent_upscale_models/`。已测试文件为 `h3_upscaler_lms_v0.1.safetensors`，本仓库不打包模型权重。
 5. 重启 ComfyUI，浏览器强制刷新，在 `selflift` 分类查找 `selflift-Fish`。
 

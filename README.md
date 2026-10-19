@@ -64,7 +64,7 @@ Requires a current ComfyUI build with native MiniMax H3 support. The recommended
    git clone https://github.com/Fish4AI/comfyui-SelfLift-Fish.git
    ```
 
-   The repository is currently private; GitHub authentication with access is required.
+   The repository is public. No GitHub login is required to clone it over HTTPS.
 3. Install the optional [H3 latent upscaler](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler) checkpoint under `ComfyUI/models/latent_upscale_models/`. The tested selection is `h3_upscaler_lms_v0.1.safetensors`. Weights are not bundled.
 4. Restart ComfyUI and hard-refresh the browser. Search for **selflift-Fish** in the `selflift` category.
 

@@ -26,7 +26,8 @@ Related work:
 ## Licensing status
 
 No explicit standalone license file was present in the inspected upstream base.
-This private repository does not relabel upstream code as MIT, Apache or another
+This repository does not relabel upstream code as MIT, Apache or another
 license, or grant rights over third-party code or model weights. Original
 authors retain their rights; model checkpoints and dependencies have their own
-terms. Resolve upstream redistribution permissions before a public release.
+terms. Public source availability does not supply a missing upstream license
+or imply unrestricted rights to redistribute or relicense third-party code.
