@@ -47,8 +47,21 @@ ComfyUI so existing connections are preserved.
   VSA is explicitly not adapted. Global can use the native dense path.
 - Global-context chunking does not support arbitrary attention overrides,
   including TST, and the sampler rejects `noise_mask` with memory saving on.
-- Native TensorWise INT8 and the implemented standard floating-point QKV paths
-  are supported. Other quantization layouts/custom transforms may be rejected.
+- Standard BF16/FP16/FP32, native TensorWise INT8 and scaled FP8 E4M3 QKV paths
+  are supported. This includes the official H3 FL2VA/Ref2VA scaled FP8 checkpoints;
+  their input/weight scales are retained across head and token chunks. Other
+  quantization layouts/custom transforms may be rejected.
+- Global stream reuses identical input normalization/modulation across head
+  groups within the current block call. Native FP8 input quantization can also
+  be reused with its original scale. This temporary cache is capped at 256 MiB,
+  keeps 2 GiB of reported free device memory as headroom, and falls back to
+  recomputation when space is unavailable. It is separate from the weight-cache
+  budget and needs no workflow/UI change. Reference rows and attention scope
+  stay intact; activations are never reused across denoising steps or layers.
+- With Global stream enabled, reference-conditioned low-resolution forwards
+  also use the selected weight-cache budget and block-local prepared weights.
+  Their native attention, projections and MLP kernels are retained. Low-stage
+  forwards without reference blocks keep the original path.
 - The image sampler and TST node from upstream are retained. Their presence does
   not mean all combinations with the H3 global paths are supported.
 
@@ -61,6 +74,9 @@ The backend ID remains `SelfLiftH3Sampler`.
 **Global stream reports a patch/quantization mismatch:** use a supported native
 H3/SLA/sol-attn setup, or use Global where applicable. Do not silently replace
 the sparse mode or model to obtain a superficially successful run.
+If an official scaled FP8 model reports that only `TensorWiseINT8Layout` is
+supported, update selflift-Fish and restart ComfyUI: that message comes from
+the version before scaled FP8 support was added.
 
 **Long videos still run slowly or exhaust memory:** keep cfg at the model's
 appropriate value, examine duration/resolution/reference tokens, inspect the

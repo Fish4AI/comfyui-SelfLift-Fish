@@ -1,5 +1,28 @@
 # Measurements, scope and reproduction
 
+## Reference-image update (2026-10-30)
+
+Compared the previously installed SelfLift-Fish with this update, not unmodified facok upstream. RTX 5070 Ti 16 GB / 128 GB RAM; two matching-resolution reference images, 1376×768, 124 frames at 24 fps, seed 82341234. Native INT8 ref2va, DMAD v4 LoRA 0.8, Euler/beta 10 steps, transition 6, lowres scale 0.7, CFG 1; Global stream, chunk 4096, weight cache 4 GiB, SLA 10%, extra_tokens=256.
+
+Interleaved order: updated, baseline, updated, baseline. Means of two complete video renders per version:
+
+| Measurement | Before | Updated | Time reduction |
+| --- | ---: | ---: | ---: |
+| Low-resolution stage | 57.507 s | 55.185 s | 4.0% |
+| High-resolution stage | 51.242 s | 47.980 s | 6.4% |
+| Sampling including upscale | 111.127 s | 105.601 s | 5.0% |
+| Sampling, AV decoding and video export | 124.567 s | 119.087 s | 4.4% |
+
+Total runs: before 124.533 / 124.601 s; updated 120.128 / 118.046 s. Condition encoding was cached; timing excludes initial text/reference encoding and model loading. Preview MP4s contain video only; decoded audio was compared separately. This is not a cold-start benchmark or a measured speedup for 20-second/2 MP/FP8 generation.
+
+The update reuses inputs within one layer/forward and prepares weights within existing low-stage reference blocks. It does not cache reference features across denoising steps or change reference dimensions, steps or sparse settings. Temporary input cache is capped at 256 MiB with a free-memory guard.
+
+Quality: native last-layer attention with extra_tokens=256 differed even when the original code repeated an identical input. In a separate deterministic complete-video comparison, both sides used extra_tokens=0: both stage latents, all 124 decoded frames and decoded audio matched bit for bit. Production code and performance runs retain extra_tokens=256. This validates the tested configuration, not universal bitwise equality. BF16, INT8 and scaled FP8 layer regressions also passed.
+
+PyTorch allocated-tensor peaks averaged 2.577 GiB before and 2.857 GiB after; these exclude DynamicVRAM mappings and are not whole-GPU peaks. No whole-GPU peak reduction is claimed. Node IDs, interfaces and saved parameter ordering are unchanged.
+
+---
+
 Recorded 2026-10-18/19 on an RTX 5070 Ti 16 GB and 128 GB system RAM.
 The tested CUDA stack for the upscaler investigation was PyTorch
 2.9.1+cu130, with ComfyUI flagging the affected cuDNN memory-workaround range.

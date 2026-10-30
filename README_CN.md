@@ -1,112 +1,74 @@
 # selflift-Fish
 
-**面向 ComfyUI 原生 MiniMax H3 的全局上下文省显存优化：修复空间分块导致的背景形变，保留注意力加速，让 16 GB 显卡更实用地生成长视频。**
+**更长视频 · 更高分辨率 · 更稳定的背景**
 
-[English](README.md) · [实测数据](docs/BENCHMARKS.md) · [参数说明](docs/SETTINGS.md) · [来源与致谢](NOTICE.md)
+基于 [facok/comfyui-SelfLift](https://github.com/facok/comfyui-SelfLift) 改进的 ComfyUI MiniMax H3 省显存采样节点。
 
-本项目基于 [facok/comfyui-SelfLift](https://github.com/facok/comfyui-SelfLift) 改进。原作者提供了渐进分辨率采样、H3 音视频适配和学习式 latent 放大器集成；本项目重点解决实际使用中遇到的背景形变、显存压力和后续采样步突然变慢的问题。
+[English](README.md) · [参数说明](docs/SETTINGS.md) · [实测详情](docs/BENCHMARKS.md) · [来源与致谢](NOTICE.md)
 
-## 主要提升
+## 能带来什么
 
-### 1. 修复开启高分辨率空间分块后的背景形变
+- **16 GB 显卡生成长视频：**已测试 20 秒、1376 × 768。
+- **更高分辨率：**同一显卡完成 15 秒、1920 × 1088。
+- **背景更稳定：**修复测试中空间分块引起的背景膨胀、位移问题。
+- **保留注意力加速：**兼容原生 H3 SLA 和 sol-attn。
+- **放大与参考图生成更快：**保留参考图分辨率和采样步数。
+- **界面简洁：**高级设置默认收起，兼容旧 SelfLift 工作流参数。
 
-原版空间分块会把目标分辨率阶段切为独立画面块，各块缺少跨块全局注意力。本项目测试中表现为背景膨胀、位移和结构不稳定。
+<p align="center"><img src="docs/assets/compact-node.png" alt="selflift-Fish 节点" width="480"></p>
 
-推荐的 **Global stream** 路径保留完整 token 和 key 上下文，在独立的注意力头与计算批次上控制显存开销，避免把场景裁成互不交流的块。用户已确认测试场景中的上述背景问题得到解决。视频模型自身产生的其他形变仍可能发生，不能据此保证所有画面都没有伪影。
+## 实际生成表现
 
-### 2. 贯穿整个模型前向的省显存处理
+RTX 5070 Ti **16 GB 显存** · **128 GB 系统内存** · 原生 INT8 H3 · Euler 10 步 · SLA 10%。
 
-- QKV 投影和前馈计算按 token 批处理。
-- 稀疏注意力按 8 个头分组执行，保留完整场景上下文。
-- 输入投影、最终输出层也按批计算，避免这些环节留下数 GiB 的整段临时矩阵。
-- 配合 DynamicVRAM 权重缓存预算和受条件限制的闲置内存池回收，缓解临时工作区与模型权重争抢显存。
-- 保留原生 SLA/sol-attn 加速、条件 sink、稀疏区间外的原生回退，以及已支持量化路径的权重格式。
+| 视频时长 | 分辨率 | 整条工作流耗时 |
+| :--- | :--- | ---: |
+| 15 秒 | 1376 × 768 | 5 分 27 秒～5 分 32 秒 |
+| **20 秒** | **1376 × 768** | **7 分 49 秒 / 8 分 12 秒** |
+| **15 秒** | **1920 × 1088** | **14 分 08 秒** |
 
-### 3. 修复“第一步快，后续每步十几分钟”的已复现退化机制
+以上为已完成的运行记录，使用了系统内存卸载。实际表现取决于硬件和工作流。
 
-早期实现只控制了 Transformer 层内部开销，遗漏模型输入、输出和预览遗留的内存池压力。新路径补齐输入/输出分块、权重准备和缓存管理。实际连续前向测试不再复现相同退化；新的真实工作流记录也已成功完成。结果与工作流、模型和系统内存状态有关。
+**已记录的提升**
+- **2.0 MP 生成：**10 秒视频从早期版本的 **27 分 50 秒降至 12 分 55 秒**；属于不同开发版本的记录，并非严格 A/B 测速。
+- **latent 放大：**独立放大器测试由 **74.8 秒降至 7.5 秒**。
+- **本次参考图优化：**两张参考图、约 5.17 秒视频的对照中，**124.6 → 119.1 秒，用时减少 4.4%**；高分阶段减少 **6.4%**。不含首次条件编码和模型加载。
 
-### 4. 大幅减少放大器的耗时和内存开销
-
-针对 ComfyUI 判定受影响的 CUDA/cuDNN 环境，将外部放大器的 Conv3d 补上与核心相同思路的绕过路径，保留其他环境的原始回退。
-
-同检查点、同形状的独立放大器测试：**74.834 → 7.474 秒，约 10 倍阶段提速**；PyTorch 峰值 allocated **10.005 → 2.539 GiB**，reserved **21.537 → 4.889 GiB**。这是放大器测试，不是整条视频的 10 倍提速或全流程显存峰值。
-
-### 5. 更简洁、兼容旧工作流的界面
-
-保留常用的种子、低分辨率步数/比例、放大模型选择和第二阶段省显存开关；高级设置默认收起，按生效条件显示。折叠时提示非默认 cfg 和像素修正状态。显示名称为 `selflift-Fish`，保留原节点 ID、参数名和保存顺序，避免旧工作流数值错位。界面及提示使用英文。
-
-## 16 GB 显卡的真实生成记录
-
-测试机器：**RTX 5070 Ti 16 GB，系统内存 128 GB**。配置：原生 INT8 H3、Euler 10 步、低分辨率 6 步、比例 0.60、cfg=1、学习式 latent 放大、SLA 10%、Global stream、chunk=4096、权重缓存 4 GiB。
-
-| 请求时长 | 目标分辨率 | 整条工作流耗时 | 结果 |
-| --- | --- | --- | --- |
-| 15 秒 | 1376 × 768（1.0 MP 档） | 5 分 27 秒～5 分 32 秒，三次 | 成功 |
-| **20 秒** | **1376 × 768（1.0 MP 档）** | **7 分 49 秒 / 8 分 12 秒，两次** | **成功** |
-| **15 秒** | **1920 × 1088（2.0 MP 档）** | **14 分 08 秒** | **执行日志完成** |
-
-以上来自 ComfyUI 任务历史和日志，是完整执行时间，不是单层或随机输入前向的推算。各次内容不同，不能作为同种子严格横向测速。
-
-### 2.0 MP：更高分辨率下的能力与提升
-
-同一台 **16 GB 显卡**已经完成 **15 秒、1920 × 1088** 的生成，打包后共 **219709 tokens**。这条新版记录中，完整放大过渡 `paired_lifts` 为 **10.408 秒**，高分辨率四步为 **157.913 / 101.975 / 112.816 / 100.402 秒**，整条工作流 **14 分 08 秒**。
-
-| 1920 × 1088 测试记录 | 整条工作流耗时 | 高分辨率阶段耗时 |
-| --- | ---: | ---: |
-| 早期 global，10 秒视频 | 27 分 50 秒 | 1322.042 秒 |
-| 完成流式优化、尚未修复放大器卷积，10 秒视频 | **12 分 55 秒** | **249.757 秒** |
-| 流式优化＋放大器修复，更长的 15 秒视频 | **14 分 08 秒** | 477.195 秒 |
-
-两条 10 秒记录之间，整条执行时间观测下降约 **54%**（约 **2.15 倍**的记录吞吐提升），高分辨率阶段下降约 **81%**。这是本项目不同开发版本的运行记录，不是与 facok 未修改原版的严格测速；提示词、参考条件、缓存及运行状态没有完全固定，因此不能把全部差异归因于代码。15 秒案例单独展示更大工作量下的完成能力，不参与上述百分比计算。详见 [2.0 MP 实测明细](docs/BENCHMARKS.md#a2-20-mp-high-resolution-results)。
-
-这里的“16 GB”是实测显卡容量。运行仍使用了较充裕的系统 RAM 和 DynamicVRAM 卸载，不能理解为整个模型和工作流完全驻留 16 GB 显存，更不能直接推广为 8 GB 卡同样能跑。输出帧数和编码时长可能因工作流取整而略有差异。
-
-详见 [完整实测说明](docs/BENCHMARKS.md)，其中分开列出整条视频、完整前向和单独放大器数据。
+参考图优化通过了确定性完整视频的输出一致性验证。[查看测试条件与适用范围](docs/BENCHMARKS.md#reference-image-update-2026-10-30)。
 
 ## 安装
 
-1. 使用支持原生 MiniMax H3 的较新 ComfyUI；Global stream 还要求原生稀疏注意力与 Comfy Kitchen 支持。
-2. 若已安装 facok 原版，先备份并把备份移出 `custom_nodes`。两者注册相同节点 ID，**只保留一个启用的版本**。
-3. 在 `ComfyUI/custom_nodes` 内克隆：
+需要支持原生 MiniMax H3 的 ComfyUI；Global stream 还需要原生稀疏注意力及 Comfy Kitchen。
+
+1. 如已安装 SelfLift，先备份到 **`custom_nodes` 之外**，只保留一个启用版本。
+2. 在 `ComfyUI/custom_nodes` 中运行：
 
    ```bash
    git clone https://github.com/Fish4AI/comfyui-SelfLift-Fish.git
    ```
 
-   仓库已公开，使用 HTTPS 克隆无需登录 GitHub。
-4. 将 [H3 latent 放大器](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler) 权重放到 `ComfyUI/models/latent_upscale_models/`。已测试文件为 `h3_upscaler_lms_v0.1.safetensors`，本仓库不打包模型权重。
-5. 重启 ComfyUI，浏览器强制刷新，在 `selflift` 分类查找 `selflift-Fish`。
+3. 使用学习式放大时，将 [H3 latent 放大器](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler) 放入 `ComfyUI/models/latent_upscale_models/`。
+4. 重启 ComfyUI、刷新浏览器，搜索 **selflift-Fish**。
 
 ## 推荐起点
 
-| 参数 | 值 |
-| --- | --- |
-| 上游总步数 / 采样器 / 调度器 | 10 / 标准 Euler / 实测使用 beta |
-| Low-resolution steps / scale | 6 / 0.60 |
+| 参数 | 建议值 |
+| :--- | :--- |
+| 总步数 / 采样器 / 调度器 | 10 / Euler / beta |
+| 低分辨率步数 / 比例 | 6 / 0.60 |
 | cfg | 1.0 |
-| Upscaler model | `h3_upscaler_lms_v0.1.safetensors` |
-| Pixel correction coverage | 0 |
-| Stage 2 memory saving | On |
-| Memory-saving mode | Global stream |
-| Token chunk size / Weight cache budget | 4096 / 4 GiB |
-| Unload upscaler | On |
+| 放大模型 | `h3_upscaler_lms_v0.1.safetensors` |
+| 第二阶段省显存 / 模式 | 开启 / Global stream |
+| Token chunk / 权重缓存 | 4096 / 4 GiB |
 
-在上游官方“模型稀疏注意力”节点配置 SLA/sol-attn；SLA 10% 是本机测试基准，仍应匹配模型/LoRA 的要求。视频时长、分辨率和总步数继续在上游设置。
+在上游官方“模型稀疏注意力”节点设置 SLA/sol-attn，SLA 10% 为本机测试基准。普通分辨率的长视频也可以开启省显存，提速幅度取决于显存压力。
 
-## 使用边界
-
-- 全局上下文省显存同样可以用于普通分辨率的长视频。能否提速取决于显存压力，并非所有任务开启都更快。
-- `global_stream` 为推荐模式；`global` 是保留全局上下文的兼容路径。`spatial/global_ram` 仅为旧工作流保留，不推荐新建使用。
-- 当前全局路径尚未适配 VSA；TST/其他注意力覆盖补丁、`noise_mask` 和部分量化格式有限制。
-- 只接受 `s_churn=0` 的标准 Euler。
-- 保留完整上下文不等于密集注意力逐对精确计算；稀疏注意力仍有近似，分批与卷积内核也可能带来舍入差异。
-- H3 音视频适配属于实验性扩展；原 SelfLift 论文并未验证本项目的视频实现。
+**兼容范围：**仅支持标准 Euler；支持普通浮点、原生 INT8 和 scaled FP8 E4M3 权重。全局路径暂不支持 VSA。其他补丁限制和高级参数见 [参数说明](docs/SETTINGS.md)。
 
 ## 来源与致谢
 
-感谢 **facok** 的 [comfyui-SelfLift](https://github.com/facok/comfyui-SelfLift)，本项目是在其代码基础上的改进。检查的本地上游基线为 `835c3cf7919410f71f414688f049c6ca497789d0`。Fish 的贡献集中在全局上下文省显存、原生注意力兼容、输入/输出批处理、权重与缓存管理、放大器修复和界面整理，不将原作者功能列为原创。
+本项目基于 **[facok/comfyui-SelfLift](https://github.com/facok/comfyui-SelfLift)** 的渐进采样器与 H3 适配改进。感谢 SelfLift 作者、ComfyUI 贡献者及 LBH-123-AI 的 H3 放大器。
 
-感谢 **LBH-123-AI** 的 H3 latent 放大器、**ComfyUI** 核心与注意力运行时，以及 SelfLift、TST 论文作者。本项目独立维护，不代表 facok 或 MiniMax 官方版本。
+本项目独立维护，并非 facok 或 MiniMax 官方版本。[作者与许可说明](NOTICE.md) · [原版中文文档](docs/UPSTREAM_README_CN.md)。
 
-保留 [原版英文说明](docs/UPSTREAM_README.md) 与 [中文说明](docs/UPSTREAM_README_CN.md)。许可和作者来源见 [NOTICE.md](NOTICE.md)。
+**欢迎用自己的工作流测试，反馈效果与可复现的问题。**

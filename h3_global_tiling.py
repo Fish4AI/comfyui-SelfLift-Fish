@@ -320,6 +320,39 @@ def _forward(executor, streams, timestep, context, transformer_options, minimax_
             ram_state.clear()
 
 
+def _prepared_native_block(block, previous, args, extra):
+    from .h3_prepared_weights import prepared_block
+    x=args["img"]
+    with prepared_block(block,x.device,x.dtype):
+        return previous(args,extra) if previous is not None else extra["original_block"](args)
+
+
+def _native_forward_reuse(executor, streams, timestep, context, transformer_options,
+                          *, base_model_ref, weight_cache_gb, **kwargs):
+    """Keep the native low-stage kernels and patches; scope weight reuse only."""
+    if not (kwargs.get("minimax_payload") or {}).get("refs"):
+        return executor(streams,timestep,context,transformer_options,**kwargs)
+    from .h3_prepared_weights import weight_cache_budget
+    network=executor.class_obj
+    options=comfy.patcher_extension.copy_nested_dicts(transformer_options)
+    dit=options.setdefault("patches_replace",{}).setdefault("dit",{})
+    for index,block in enumerate(network.blocks):
+        key=("double_block",index)
+        dit[key]=partial(_prepared_native_block,block,dit.get(key))
+    base=base_model_ref()
+    with weight_cache_budget(getattr(base,"current_patcher",None),weight_cache_gb):
+        return executor(streams,timestep,context,options,**kwargs)
+
+
+def prepared_native_model(model, weight_cache_gb=4.):
+    """Limit weight residency and repeat LoRA preparation, without head tiling."""
+    patched=model.clone()
+    patched.add_wrapper_with_key(comfy.patcher_extension.WrappersMP.DIFFUSION_MODEL,
+        "selflift_native_weight_reuse",partial(_native_forward_reuse,
+            base_model_ref=weakref.ref(model.model),weight_cache_gb=weight_cache_gb))
+    return patched
+
+
 def tiled_model(model, chunk_size=2048, use_ram=False, use_stream=False, weight_cache_gb=4.):
     if not isinstance(model.model, comfy.model_base.MiniMaxH3):
         raise ValueError("SelfLift global chunking requires a MiniMax H3 model")

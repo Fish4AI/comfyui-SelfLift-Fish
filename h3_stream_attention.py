@@ -21,17 +21,53 @@ from .h3_global_tiling import _segments_slice, _chunk_mlp
 from .h3_prepared_weights import prepared_block
 
 
+_FP8_LAYOUTS = frozenset(("TensorCoreFP8Layout", "TensorCoreFP8E4M3Layout"))
+_STREAM_LAYOUTS = _FP8_LAYOUTS | {"TensorWiseINT8Layout"}
+
+
+def _input_cache_budget(device, requested_mb):
+    """Bound layer-local reuse without borrowing the model's weight cache.
+
+    Count only currently free device memory, leaving 2 GiB for later sparse
+    scratch/prefetch. Existing allocator/driver reservations are not headroom.
+    The internal option also permits a baseline run without changing math.
+    """
+    requested = max(0, min(float(requested_mb), 256.0)) * 1024**2
+    if not requested or device.type != "cuda":
+        return 0
+    free, _ = torch.cuda.mem_get_info(device)
+    return int(min(requested, max(0, free - 2 * 1024**3)))
+
+
+def _prepare_qkv_input(x, weight, input_scale):
+    if isinstance(weight, QuantizedTensor) and weight._layout_cls in _FP8_LAYOUTS:
+        return QuantizedTensor.from_float(x, weight._layout_cls, scale=input_scale)
+    return x
+
+
+def _validate_quantized_weight(weight):
+    if weight._layout_cls not in _STREAM_LAYOUTS:
+        raise ValueError(
+            "SelfLift global_stream supports standard floating-point, native TensorWise INT8 "
+            f"and scaled FP8 E4M3 QKV weights; got {weight._layout_cls}"
+        )
+    if getattr(weight._params, "transposed", False) or tuple(weight._qdata.shape) != tuple(weight.shape):
+        raise ValueError("SelfLift global_stream requires unpacked, non-transposed QKV weight rows")
+    scale = weight._params.scale
+    if scale.numel() > 1:
+        if (weight._layout_cls in _FP8_LAYOUTS or scale.shape[0] != weight.shape[0]
+                or scale.numel() != weight.shape[0]):
+            raise ValueError("SelfLift global_stream: unsupported QKV scale geometry")
+
+
 def select_weight_rows(weight, rows):
     """Avoid QuantizedTensor slicing's implicit full dequantization fallback."""
     if not isinstance(weight, QuantizedTensor):
         return weight.index_select(0, rows)
-    if weight._layout_cls != "TensorWiseINT8Layout" or getattr(weight._params,"transposed",False):
-        raise ValueError("SelfLift global_stream currently supports standard and TensorWiseINT8Layout QKV weights")
+    _validate_quantized_weight(weight)
     p=weight._params
     scale=p.scale
     if scale.numel()>1:
-        if scale.shape[0]!=weight.shape[0] or scale.numel()!=weight.shape[0]:
-            raise ValueError("SelfLift global_stream: unsupported QKV scale geometry")
         scale=scale.index_select(0,rows)
     params=dataclasses.replace(p,orig_shape=(rows.numel(),weight.shape[1]),scale=scale)
     return QuantizedTensor(weight._qdata.index_select(0,rows),weight._layout_cls,params)
@@ -43,10 +79,20 @@ def validate_projection(linear):
         raise ValueError("SelfLift global_stream does not support custom QKV weight transforms")
     weight=linear.weight
     if isinstance(weight,QuantizedTensor):
-        if weight._layout_cls!="TensorWiseINT8Layout":
-            raise ValueError("SelfLift global_stream currently supports standard and TensorWiseINT8Layout QKV weights")
+        _validate_quantized_weight(weight)
     elif weight.dtype not in (torch.bfloat16,torch.float16,torch.float32):
-        raise ValueError("SelfLift global_stream requires BF16/FP16/FP32 or native TensorWise INT8 QKV weights")
+        raise ValueError("SelfLift global_stream requires BF16/FP16/FP32, native TensorWise INT8 or scaled FP8 E4M3 QKV weights")
+
+
+def project_qkv(x, weight, bias, input_scale=None):
+    """Match native FP8 activation scaling without expanding the full weight.
+
+    Passing ordinary BF16 activations to an FP8 QuantizedTensor would silently
+    dequantize its weights. Keep both operands quantized for native FP8 GEMM.
+    The checkpoint's input scale (or Comfy's default when absent) must survive
+    head/token grouping; never recalculate it independently for each chunk.
+    """
+    return F.linear(_prepare_qkv_input(x, weight, input_scale), weight, bias)
 
 
 @contextmanager
@@ -88,7 +134,21 @@ def _sparse_block(block,x,t_emb,segments,rope,options,chunk_size,spec,block_inde
     smoothing=getattr(attn.qkv_proj,"pre_quant_scale",None)
     if smoothing is not None:
         smoothing=mm.cast_to_device(smoothing,x.device,x.dtype)
+    input_scale=getattr(attn.qkv_proj,"input_scale",None)
+    if input_scale is not None:
+        input_scale=mm.cast_to_device(input_scale,x.device,None)
     with cast_projection(attn.qkv_proj,x.device,x.dtype) as (full_weight,full_bias):
+        # x and AdaLN are unchanged until every head group has finished. Reuse
+        # exactly the same chunk-shaped inputs; never cache a previous step's
+        # activations, change projection geometry, or drop conditioning rows.
+        ranges=[(start,min(n,start+chunk_size),
+                 _segments_slice(segments,start,min(n,start+chunk_size)))
+                for start in range(0,n,chunk_size)]
+        cache={}
+        cache_bytes=0
+        cache_limit=_input_cache_budget(x.device,options.get("selflift_input_cache_mb",256))
+        fp8=isinstance(full_weight,QuantizedTensor) and full_weight._layout_cls in _FP8_LAYOUTS
+        element_size=1 if fp8 else x.element_size()
         for a in range(0,heads,head_chunk):
             b=min(heads,a+head_chunk)
             indices=torch.arange(a*dim,b*dim,device=x.device)
@@ -96,11 +156,18 @@ def _sparse_block(block,x,t_emb,segments,rope,options,chunk_size,spec,block_inde
             weight=select_weight_rows(full_weight,rows)
             bias=full_bias.index_select(0,rows) if full_bias is not None else None
             def chunks():
-                for start in range(0,n,chunk_size):
-                    end=min(n,start+chunk_size)
-                    h=_mod_scale_shift(block.norm1(x[start:end]),shift,scale,_segments_slice(segments,start,end))
-                    if smoothing is not None:
-                        h=h*smoothing
+                nonlocal cache_bytes
+                for start,end,chunk_segments in ranges:
+                    h=cache.get(start)
+                    if h is None:
+                        h=_mod_scale_shift(block.norm1(x[start:end]),shift,scale,chunk_segments)
+                        if smoothing is not None:
+                            h=h*smoothing
+                        h=_prepare_qkv_input(h,full_weight,input_scale)
+                        size=(end-start)*x.shape[1]*element_size
+                        if cache_bytes+size<=cache_limit:
+                            cache[start]=h
+                            cache_bytes+=size
                     yield F.linear(h,weight,bias)
             out,kmean,vscale=ck.sol_attn_chunked(
                 chunks,n,b-a,rope,(qw,kw),
@@ -110,6 +177,7 @@ def _sparse_block(block,x,t_emb,segments,rope,options,chunk_size,spec,block_inde
             output[:,a:b].copy_(out.view(n,b-a,dim))
             pooled[0][a:b].copy_(kmean);pooled[1][a:b].copy_(vscale)
             del out,kmean,vscale,weight,bias,rows,indices
+        cache.clear()
     patch.pooled[key]=pooled
     output=output.view(n,heads*dim)
     for start in range(0,n,chunk_size):

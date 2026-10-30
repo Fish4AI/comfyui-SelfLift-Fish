@@ -332,7 +332,9 @@ def progressive_sample(model, positive, negative, vae, latent_image, sampler, si
     low_anchor = low_video
     video_anchor = source_video
     low_latent = _pack([low_video] + audio_streams, nested)
-    low_model = masked_model(model, low_anchor, m_low)
+    low_base = (h3_global_tiling.prepared_native_model(model, highres_weight_cache_gb)
+                if highres_tiling and highres_tiling_mode == "global_stream" else model)
+    low_model = masked_model(low_base, low_anchor, m_low)
     high_model = masked_model(high_model, video_anchor, m_full)
     del source_video, low_video
     del streams
