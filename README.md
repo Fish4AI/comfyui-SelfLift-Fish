@@ -6,7 +6,9 @@ A memory-saving MiniMax H3 sampler for ComfyUI, built on [facok/comfyui-SelfLift
 
 [中文](README_CN.md) · [Settings](docs/SETTINGS.md) · [Benchmarks](docs/BENCHMARKS.md) · [Credits](NOTICE.md)
 
-**v0.1.1 — Audio-reference stability:** automatically adds one joint transition evaluation when reference audio is present; image-only workflows keep their original step count and showed essentially unchanged timing in our tests. The optional attention-kernel correction has a limited hardware/version scope. [Results and compatibility](docs/AUDIO_REFERENCE_UPDATE.md).
+**v0.1.2 — Smoother high-resolution sampling:** fixes temporary-memory retention that can cause long stage-two stalls. A tested 10-second, 1664 × 928 workflow completed in **6m 50s**, with all 243 decoded frames and audio identical to the earlier slow run. [Results and test conditions](docs/MEMORY_UPDATE.md).
+
+Includes the [v0.1.1 audio-reference stability improvements and compatibility notes](docs/AUDIO_REFERENCE_UPDATE.md). Existing workflows need no new settings.
 
 ## Highlights
 

@@ -2,26 +2,8 @@
 from contextlib import contextmanager
 from functools import partial
 import torch
-import logging
-import comfy.model_prefetch
+from .h3_memory import trim_workspace_cache
 from comfy.ldm.minimax.model import patchify_video, pack_audio, MiniMaxH3Model
-
-
-def trim_workspace_cache(device):
-    """Reclaim large inactive scratch left by upscalers/previews at a boundary.
-
-    This does not free live tensors, unload weights or clear attention caches.
-    Normal bounded model scratch is kept; only a large pool with substantial
-    inactive space is trimmed before the next model forward.
-    """
-    if device.type!='cuda':return
-    reserved=torch.cuda.memory_reserved(device)
-    allocated=torch.cuda.memory_allocated(device)
-    total=torch.cuda.get_device_properties(device).total_memory
-    if reserved<=max(2*2**30,total*.4) or reserved-allocated<=2*2**30:return
-    with torch.cuda.device(device),comfy.model_prefetch.pause_malloc_graph():
-        torch.cuda.empty_cache()
-    logging.info('[SelfLift global stream v5 workspace] inactive pool trimmed: reserved %.2f -> %.2f GiB; live tensors and attention caches retained',reserved/2**30,torch.cuda.memory_reserved(device)/2**30)
 
 
 def chunked_embed(network,chunk_size,video_x,audio_x,context,layout,payload,transformer_options):

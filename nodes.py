@@ -35,6 +35,7 @@ from . import h3_global_tiling
 from . import h3_tst
 from .diagnostics import log_memory
 from .h3_token_guard import corrected_sparse_tokens
+from .h3_memory import release_stage_workspace
 
 
 class _StageTimer:
@@ -470,6 +471,9 @@ def progressive_sample(model, positive, negative, vae, latent_image, sampler, si
     resume_noise = _pack([torch.zeros_like(s) for s in resume_streams], nested)
     del next_streams, resume_streams
     transition_timer.mark("renoise")
+    if highres_tiling and highres_tiling_mode == "global_stream":
+        if release_stage_workspace(model.load_device):
+            transition_timer.mark("workspace_reset")
     transition_timer.finish()
     log_memory("transition end / high_resolution start", model.load_device)
 
