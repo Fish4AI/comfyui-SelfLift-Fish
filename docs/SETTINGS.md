@@ -5,7 +5,7 @@
 | Display label | Backend key | Effect |
 | --- | --- | --- |
 | Seed / Seed behavior | `seed` / frontend seed control | Use Fixed and an unchanged seed for comparisons. |
-| Low-resolution steps | `transition_step` | Number of early low-resolution evaluations, not total steps. Six of ten leaves four target-resolution steps. Increasing it usually reduces work but leaves less target-resolution refinement. Must be less than upstream total steps. |
+| Low-resolution steps | `transition_step` | Number of early low-resolution evaluations, not total steps. Six of ten normally leaves four target-resolution steps. Audio references add one joint transition evaluation (6 + 5); image-only references retain 6 + 4. Increasing it usually reduces work but leaves less target-resolution refinement. Must be less than upstream total steps. |
 | Low-resolution scale | `lowres_scale` | Width and height fraction. 0.60 means about 36% of video spatial positions after rounding; duration stays unchanged. Smaller can lose small details and is not a guaranteed proportional compute reduction. |
 | Upscaler model | `upscaler_model` | Learned latent lift at the transition. Changing weights changes reconstruction and performance. None requires a usable pixel-correction route. |
 | Stage 2 memory saving | `highres_tiling` | Enables the selected target-resolution memory path. Mode/chunk/cache are inactive when off. |
@@ -13,6 +13,22 @@
 The total sigma schedule, duration, output dimensions and sparse-attention mode
 remain upstream controls. No duplicate total-step or resolution controls are
 added here.
+
+## Automatic audio-reference handling
+
+Reference audio (including the encoded soundtrack of a reference video) adds one
+joint high-resolution audio/video evaluation at the resolution switch. No new
+workflow control is needed. Image-only references retain the upstream step count.
+This extra evaluation cost about 12–14% more sampling time in the tested audio
+scene. If no resolution switch is needed, the existing direct path remains.
+
+The optional token-budget correction is separate: its bundled native core runs
+only with comfy-kitchen **0.2.40**, **Windows x64**, an **sm_120 GPU**, and a driver
+supporting **CUDA 13.1 or newer**. It was tested on RTX 5070 Ti. Unsupported
+environments or a missing/unloadable binary keep native attention and emit a
+notice; the audio-reference transition improvement still applies. The correction
+also applies to image-only sampling on a supported stack, so outputs need not
+match the previous release bit for bit. [Test results](AUDIO_REFERENCE_UPDATE.md).
 
 ## Advanced controls
 

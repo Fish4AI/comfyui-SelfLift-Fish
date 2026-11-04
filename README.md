@@ -6,6 +6,8 @@ A memory-saving MiniMax H3 sampler for ComfyUI, built on [facok/comfyui-SelfLift
 
 [中文](README_CN.md) · [Settings](docs/SETTINGS.md) · [Benchmarks](docs/BENCHMARKS.md) · [Credits](NOTICE.md)
 
+**v0.1.1 — Audio-reference stability:** automatically adds one joint transition evaluation when reference audio is present; image-only workflows keep their original step count and showed essentially unchanged timing in our tests. The optional attention-kernel correction has a limited hardware/version scope. [Results and compatibility](docs/AUDIO_REFERENCE_UPDATE.md).
+
 ## Highlights
 
 - **Long videos on 16 GB VRAM:** tested with 20 seconds at 1376 × 768.
@@ -32,9 +34,9 @@ Completed runs using RAM offloading; results depend on hardware and workflow.
 **Recorded improvements**
 - **2.0 MP:** a 10-second workflow went from **27m 50s to 12m 55s** across development versions. These were not controlled A/B runs.
 - **Latent upscaling:** **74.8 → 7.5 seconds** in an isolated upscaler test.
-- **Latest reference-image update:** **124.6 → 119.1 seconds (4.4% less time)** in a two-reference, 5.17-second video comparison; high-resolution sampling was **6.4% faster**. Excludes initial condition encoding and model loading.
+- **October 30 reference-image optimization:** **124.6 → 119.1 seconds (4.4% less time)** in a two-reference, 5.17-second video comparison; high-resolution sampling was **6.4% faster**. Excludes initial condition encoding and model loading.
 
-The reference update passed a deterministic full-video output comparison. See [test conditions and limits](docs/BENCHMARKS.md#reference-image-update-2026-10-30).
+The October 30 reference optimization passed a deterministic full-video output comparison. The newer attention correction can change outputs; see [test conditions and limits](docs/BENCHMARKS.md#reference-image-update-2026-10-30).
 
 ## Install
 

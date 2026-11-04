@@ -29,7 +29,7 @@ const SEED_MODES = {
 const installed = new WeakSet();
 const originalVisibility = new WeakMap();
 const TOOLTIPS = {
-    transition_step: "Number of low-resolution steps within the upstream total. For example, 6 out of 10 leaves 4 target-resolution steps. More low-resolution steps usually save time but leave fewer steps to refine target-resolution details. Must be smaller than the total step count.",
+    transition_step: "Number of low-resolution steps within the upstream total. Usually 6 out of 10 leaves 4 target-resolution steps. Audio references automatically add one joint transition evaluation (6 + 5); image-only references keep 6 + 4. More low-resolution steps usually save time but leave fewer steps for target-resolution details. Must be smaller than the total step count.",
     lowres_scale: "Low-resolution width and height relative to the target; frame count is unchanged. 0.60 means about 36% of the target spatial positions, subject to rounding, not 60% of total compute. Lower values usually save compute but may lose small details. Tested default: 0.60.",
     rho: "Experimental fraction of high-risk latent locations corrected toward a pixel-VAE anchor, not correction strength. Strength is controlled by the min/max fields. Any positive coverage with positive maximum strength requires VAE decoding and re-encoding of the video; 0.05 does not mean 5% of that cost. Default 0 skips this route. When Upscaler model is None, use positive coverage and positive maximum strength.",
 };

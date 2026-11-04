@@ -1,5 +1,12 @@
 # Measurements, scope and reproduction
 
+## Audio-reference stability update (2026-11-04)
+
+See [audio-reference results and image-only regression](AUDIO_REFERENCE_UPDATE.md)
+for the v0.1.1 change: two fixed-seed full-video comparisons, local deformation
+measurements, actual sampling counts and timing, and the native-core support
+boundary. These results are separate from the October 30 speed optimization below.
+
 ## Reference-image update (2026-10-30)
 
 Compared the previously installed SelfLift-Fish with this update, not unmodified facok upstream. RTX 5070 Ti 16 GB / 128 GB RAM; two matching-resolution reference images, 1376×768, 124 frames at 24 fps, seed 82341234. Native INT8 ref2va, DMAD v4 LoRA 0.8, Euler/beta 10 steps, transition 6, lowres scale 0.7, CFG 1; Global stream, chunk 4096, weight cache 4 GiB, SLA 10%, extra_tokens=256.

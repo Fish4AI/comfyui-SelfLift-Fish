@@ -15,6 +15,14 @@ compatibility, grouped GPU head streaming, chunked input/output paths,
 prepared weight and cache handling, the guarded upscaler Conv3d workaround,
 and the compact frontend.
 
+The v0.1.1 audio-reference transition handling is a Fish4AI change. The optional
+native token-budget correction contains CUDA sources from
+[Comfy-Org/comfy-kitchen v0.2.40](https://github.com/Comfy-Org/comfy-kitchen/tree/v0.2.40/comfy_kitchen/backends/cuda/sage_attention),
+licensed under Apache-2.0. Their copyright headers are retained, modified files
+are identified, and the component license is included at
+[`native/token_guard/LICENSE`](native/token_guard/LICENSE). This component license
+does not relicense the rest of this repository.
+
 Related work:
 
 - [SelfLift](https://arxiv.org/abs/2609.02036)

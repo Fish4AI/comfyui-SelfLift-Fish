@@ -1,0 +1,209 @@
+{
+  "inputs": {
+    "required": {
+      "model": [
+        "MODEL",
+        {}
+      ],
+      "positive": [
+        "CONDITIONING",
+        {}
+      ],
+      "negative": [
+        "CONDITIONING",
+        {}
+      ],
+      "vae": [
+        "VAE",
+        {}
+      ],
+      "latent_image": [
+        "LATENT",
+        {}
+      ],
+      "sampler": [
+        "SAMPLER",
+        {}
+      ],
+      "sigmas": [
+        "SIGMAS",
+        {}
+      ],
+      "seed": [
+        "INT",
+        {
+          "default": 0,
+          "min": 0,
+          "max": 18446744073709551615,
+          "control_after_generate": true
+        }
+      ],
+      "cfg": [
+        "FLOAT",
+        {
+          "default": 1.0,
+          "min": 0.0,
+          "max": 100.0,
+          "step": 0.1,
+          "round": 0.01
+        }
+      ],
+      "transition_step": [
+        "INT",
+        {
+          "default": 6,
+          "min": 1,
+          "max": 10000
+        }
+      ],
+      "lowres_scale": [
+        "FLOAT",
+        {
+          "default": 0.6,
+          "min": 0.25,
+          "max": 1.0,
+          "step": 0.05
+        }
+      ],
+      "rho": [
+        "FLOAT",
+        {
+          "default": 0.0,
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.05
+        }
+      ],
+      "w_min": [
+        "FLOAT",
+        {
+          "default": 0.5,
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.05
+        }
+      ],
+      "w_max": [
+        "FLOAT",
+        {
+          "default": 1.0,
+          "min": 0.0,
+          "max": 1.0,
+          "step": 0.05
+        }
+      ],
+      "upscaler_model": [
+        "UPSCALE_MODELS_FROM_DISK",
+        {}
+      ]
+    },
+    "optional": {
+      "model_hires": [
+        "MODEL",
+        {}
+      ],
+      "highres_tiling": [
+        "BOOLEAN",
+        {
+          "default": true,
+          "label_on": "On",
+          "label_off": "Off"
+        }
+      ],
+      "upscaler_unload": [
+        "BOOLEAN",
+        {
+          "default": true,
+          "label_on": "On",
+          "label_off": "Off"
+        }
+      ],
+      "highres_tiling_mode": [
+        [
+          "global_stream",
+          "global"
+        ],
+        {
+          "default": "global_stream"
+        }
+      ],
+      "highres_token_chunk": [
+        "INT",
+        {
+          "default": 4096,
+          "min": 128,
+          "max": 16384,
+          "step": 128
+        }
+      ],
+      "highres_weight_cache_gb": [
+        "FLOAT",
+        {
+          "default": 4.0,
+          "min": 0.0,
+          "max": 64.0,
+          "step": 0.5
+        }
+      ]
+    }
+  },
+  "input_order": {
+    "required": [
+      "model",
+      "positive",
+      "negative",
+      "vae",
+      "latent_image",
+      "sampler",
+      "sigmas",
+      "seed",
+      "cfg",
+      "transition_step",
+      "lowres_scale",
+      "rho",
+      "w_min",
+      "w_max",
+      "upscaler_model"
+    ],
+    "optional": [
+      "model_hires",
+      "highres_tiling",
+      "upscaler_unload",
+      "highres_tiling_mode",
+      "highres_token_chunk",
+      "highres_weight_cache_gb"
+    ]
+  },
+  "sample_args": [
+    "self",
+    "model",
+    "positive",
+    "negative",
+    "vae",
+    "latent_image",
+    "sampler",
+    "sigmas",
+    "seed",
+    "cfg",
+    "transition_step",
+    "lowres_scale",
+    "rho",
+    "w_min",
+    "w_max",
+    "upscaler_model",
+    "model_hires",
+    "highres_tiling",
+    "upscaler_unload",
+    "highres_tiling_mode",
+    "highres_token_chunk",
+    "highres_weight_cache_gb"
+  ],
+  "sample_defaults": [
+    "None",
+    "False",
+    "True",
+    "'global_stream'",
+    "4096",
+    "4.0"
+  ]
+}

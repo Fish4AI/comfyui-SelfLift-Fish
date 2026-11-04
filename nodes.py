@@ -6,8 +6,8 @@ Consistency Lift (arXiv:2609.02036), re-noise it at the transition sigma, and
 finish the schedule at full resolution.
 
 Two front-ends share the same engine:
-- SelfLiftH3Sampler: MiniMax H3 audio-video (nested AV latents; the audio stream
-  has no spatial dimensions and continues through the reused Euler boundary step).
+- SelfLiftH3Sampler: MiniMax H3 audio-video (nested AV latents; reference audio
+  gets one joint high-resolution transition evaluation).
   This is an experimental extension beyond the paper's image-model evaluation.
 - SelfLiftImageSampler: compatible rectified-flow image models.
 """
@@ -34,6 +34,7 @@ from . import h3_tiling
 from . import h3_global_tiling
 from . import h3_tst
 from .diagnostics import log_memory
+from .h3_token_guard import corrected_sparse_tokens
 
 
 class _StageTimer:
@@ -228,10 +229,19 @@ def _debug_dump(vae, latents):
         Image.fromarray(frame).save(os.path.join(out_dir, name + ".png"))
 
 
+def _has_reference_audio(conditioning):
+    return any(
+        ref.get("audio_latent") is not None
+        for _, metadata in conditioning
+        for ref in metadata.get("minimax_refs", [])
+    )
+
+
 def progressive_sample(model, positive, negative, vae, latent_image, sampler, sigmas, seed, cfg,
                        transition_step, lowres_scale, rho, w_min, w_max, latent_upsample, latent_lifter=None,
                        highres_tiling=False, model_hires=None,
-                       highres_tiling_mode="spatial", highres_token_chunk=2048, highres_weight_cache_gb=4.):
+                       highres_tiling_mode="spatial", highres_token_chunk=2048, highres_weight_cache_gb=4.,
+                       audio_transition_sync=False):
     _validate_schedule(sigmas, transition_step)
     if sigmas.numel() < 2:
         return latent_image
@@ -272,17 +282,23 @@ def progressive_sample(model, positive, negative, vae, latent_image, sampler, si
     h = max(2, round(H * lowres_scale / 2) * 2)
     w = max(2, round(W * lowres_scale / 2) * 2)
     low_shape = (b, c, t, h, w) if video else (b, c, h, w)
+    audio_transition_sync = bool(audio_transition_sync and video and len(streams) > 1)
+    resume_index = transition_step - int(audio_transition_sync)
+    high_steps = sigmas.numel() - 1 - resume_index
     logging.info("[SelfLift plan] low_latent=%s target_latent=%s spatial_lift=(%.4f, %.4f) "
                  "low_nfe=%d high_nfe=%d sigma_prediction=%.8g sigma_resume=%.8g "
                  "rho=%.4f weights=(%.4f, %.4f) direct_lift=%s pixel_anchor=%s cfg=%.4f mask=%s hires_model=%s",
                  low_shape, tuple(streams[0].shape), H / h, W / w,
-                 transition_step, sigmas.numel() - 1 - transition_step,
-                 sigmas[transition_step - 1].item(), sigmas[transition_step].item(),
+                 transition_step, high_steps,
+                 sigmas[transition_step - 1].item(), sigmas[resume_index].item(),
                  rho, w_min, w_max,
                  "skipped" if rho == 1.0 and w_min == 1.0 else "external" if latent_lifter is not None else latent_upsample,
                  rho > 0.0 and w_max > 0.0, cfg,
                  "none" if noise_mask is None else f"{tuple(noise_mask.shape)}",
                  "custom" if model_hires is not None else "same")
+    if audio_transition_sync:
+        logging.info('[SelfLift audio transition] one joint high-resolution evaluation added; total NFE=%d',
+                     sigmas.numel())
 
     device = comfy.model_management.intermediate_device()
     source_video = streams[0].to(device)
@@ -341,7 +357,8 @@ def progressive_sample(model, positive, negative, vae, latent_image, sampler, si
     noise_low = comfy.sample.prepare_noise(low_latent, seed, latent_image.get("batch_index", None))
 
     total_steps = sigmas.shape[-1] - 1
-    callback = latent_preview.prepare_callback(model, total_steps)
+    total_evaluations = total_steps + int(audio_transition_sync)
+    callback = latent_preview.prepare_callback(model, total_evaluations)
     disable_pbar = not comfy.utils.PROGRESS_BAR_ENABLED
     if video:  # keyframe cond latents share the generation grid on MiniMax H3
         positive_low = _resize_keyframes(positive, h, w)
@@ -375,13 +392,14 @@ def progressive_sample(model, positive, negative, vae, latent_image, sampler, si
             preview_x0 = torch.nn.functional.interpolate(
                 x0.float(), size=(H, W), mode="bilinear", align_corners=False
             ).to(x0.dtype)
-        result = callback(step, preview_x0, preview_x0, total_steps)
+        result = callback(step, preview_x0, preview_x0, total_evaluations)
         del preview_x0
         low_timer.mark(f"step {step + 1}/{transition_step}" + (" (includes setup)" if step == 0 else ""))
         return result
 
-    # The final low-resolution model evaluation is the Eq. 3 prediction. Its Euler
-    # update is discarded and rebuilt after the resolution transition, preserving NFE.
+    # The final low-resolution prediction supplies the clean endpoint to lift.
+    # Reference audio uses a fresh joint prediction after the resolution change;
+    # other inputs retain the original reused Euler interval and NFE count.
     resolution_scale = (getattr(model.get_model_object("latent_format"), "spacial_downscale_ratio", 1)
                         if video else getattr(model.get_model_object("latent_format"), "spacial_downscale_ratio", 1))
     low_timer = _StageTimer("low_resolution", low_model.load_device, (h, w), resolution_scale)
@@ -399,8 +417,9 @@ def progressive_sample(model, positive, negative, vae, latent_image, sampler, si
     x0_streams, _ = _streams(transition.pop("x0"))
     sigma_k = sigmas[transition_step - 1]
     sigma_next = sigmas[transition_step]
-    auxiliary_next = [_euler_step(state.to(device), denoised.to(device), sigma_k, sigma_next)
-                      for state, denoised in zip(low_streams[1:], x0_streams[1:])]
+    auxiliary_next = ([state.to(device) for state in low_streams[1:]] if audio_transition_sync else
+                      [_euler_step(state.to(device), denoised.to(device), sigma_k, sigma_next)
+                       for state, denoised in zip(low_streams[1:], x0_streams[1:])])
     latent_format = model.get_model_object("latent_format")
     z0_low_vae = latent_format.process_out(x0_streams[0].float()).to(device)
     del low_latent, noise_low, low_streams, x0_streams, positive_low, negative_low
@@ -439,9 +458,14 @@ def progressive_sample(model, positive, negative, vae, latent_image, sampler, si
     video_noise = comfy.sample.prepare_noise(z0_high, (seed + 1) % (1 << 64),
                                              latent_image.get("batch_index", None)).to(z0_high)
     video_state = model_sampling.noise_scaling(sigma_k, video_noise, z0_high)
-    next_streams = [_euler_step(video_state, z0_high, sigma_k, sigma_next)] + auxiliary_next
+    # A low-resolution AV prediction belongs to the old video state. With
+    # reference audio, re-evaluate the lifted/re-noised video AND the original
+    # audio state together at sigma_k before taking this Euler interval.
+    next_streams = ([video_state] if audio_transition_sync else
+                    [_euler_step(video_state, z0_high, sigma_k, sigma_next)]) + auxiliary_next
     del z0_high, video_noise, video_state, auxiliary_next
-    resume_streams = [model_sampling.inverse_noise_scaling(sigma_next, s) for s in next_streams]
+    resume_sigma = sigma_k if audio_transition_sync else sigma_next
+    resume_streams = [model_sampling.inverse_noise_scaling(resume_sigma, s) for s in next_streams]
     resume_latent = model.model.process_latent_out(_pack(resume_streams, nested))
     resume_noise = _pack([torch.zeros_like(s) for s in resume_streams], nested)
     del next_streams, resume_streams
@@ -455,22 +479,22 @@ def progressive_sample(model, positive, negative, vae, latent_image, sampler, si
         nonlocal high_evaluations
         step = high_evaluations
         high_evaluations += 1
-        if high_evaluations > total_steps - transition_step:
+        if high_evaluations > high_steps:
             raise RuntimeError("SelfLift: too many high-resolution callbacks for the Euler schedule")
-        result = callback(step + transition_step, x0, x, total_steps)
-        high_timer.mark(f"step {step + 1}/{total_steps - transition_step}" + (" (includes setup)" if step == 0 else ""))
+        result = callback(step + transition_step, x0, x, total_evaluations)
+        high_timer.mark(f"step {step + 1}/{high_steps}" + (" (includes setup)" if step == 0 else ""))
         return result
 
     high_timer = _StageTimer("high_resolution", model.load_device, (H, W), resolution_scale)
     if highres_tiling:
         logging.info("[SelfLift plan] high-resolution tiling mode=%s token_chunk=%d", highres_tiling_mode, highres_token_chunk)
     out = comfy.samplers.sample(high_model, resume_noise, positive, negative, cfg, model.load_device,
-                                sampler, sigmas[transition_step:], high_model.model_options,
+                                sampler, sigmas[resume_index:], high_model.model_options,
                                 latent_image=resume_latent, callback=callback_high,
                                 disable_pbar=disable_pbar, seed=seed)
     del resume_latent, resume_noise
-    if high_evaluations != total_steps - transition_step:
-        raise RuntimeError(f"SelfLift: expected {total_steps - transition_step} high-resolution callbacks, received {high_evaluations}; check sampler wrappers")
+    if high_evaluations != high_steps:
+        raise RuntimeError(f"SelfLift: expected {high_steps} high-resolution callbacks, received {high_evaluations}; check sampler wrappers")
 
     result = latent_image.copy()
     result["samples"] = out.to(device=comfy.model_management.intermediate_device(),
@@ -489,11 +513,11 @@ class SelfLiftH3Sampler:
             "negative": ("CONDITIONING", {"tooltip": "Negative conditioning. Whether it is evaluated depends on guidance strength and model patches."}),
             "vae": ("VAE", {"tooltip": "Video VAE used by experimental pixel-anchor correction. Keep this connection for workflow compatibility."}),
             "latent_image": ("LATENT", {"tooltip": "Target-resolution audio/video latent defining output size and duration. Memory-saving mode does not support noise masks."}),
-            "sampler": ("SAMPLER", {"tooltip": "Standard Euler only. The resolution transition adds no extra denoiser evaluations."}),
+            "sampler": ("SAMPLER", {"tooltip": "Standard Euler only. Audio references add one joint high-resolution transition evaluation for stability; other inputs retain the upstream step count."}),
             "sigmas": ("SIGMAS", {"tooltip": "Noise schedule from the upstream scheduler. Controls total sampling steps and the denoising trajectory."}),
             "seed": ("INT", {"default": 0, "min": 0, "max": 0xffffffffffffffff, "control_after_generate": True, "tooltip": "Random seed. Use the same seed and Fixed seed behavior when comparing settings."}),
             "cfg": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 100.0, "step": 0.1, "round": 0.01, "tooltip": "Conditioning guidance strength. Tested value for this setup: 1.0. Higher values may change the look and require negative-conditioning evaluations; this is not a quality level."}),
-            "transition_step": ("INT", {"default": 6, "min": 1, "max": 10000, "tooltip": "Number of low-resolution evaluations. Tested setup: 6 low-resolution steps out of 10 total, leaving 4 target-resolution steps. Must be smaller than the upstream total step count."}),
+            "transition_step": ("INT", {"default": 6, "min": 1, "max": 10000, "tooltip": "Number of low-resolution evaluations. Typical setup: 6 of 10 upstream steps, followed by 4 target-resolution steps. Audio references add one joint transition evaluation (6 + 5). Must be smaller than the upstream step count."}),
             "lowres_scale": ("FLOAT", {"default": 0.60, "min": 0.25, "max": 1.0, "step": 0.05, "tooltip": "Low-resolution width and height relative to the target. Tested value: 0.60. Lower values usually save compute but may lose small details; higher values cost more. This is not a pixel-count ratio."}),
             "rho": ("FLOAT", {"default": 0.0, "min": 0.0, "max": 1.0, "step": 0.05, "tooltip": "Experimental pixel-anchor correction fraction. Default 0 uses only the learned latent upscaler and skips VAE decoding/re-encoding. Raising it costs more and does not guarantee better quality. Correction strength controls appear when this is above 0."}),
             "w_min": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05, "tooltip": "Minimum blend strength inside corrected regions. Must not exceed the maximum. Inactive when pixel correction is 0."}),
@@ -533,11 +557,13 @@ class SelfLiftH3Sampler:
             if rho > 0.0 and w_max > 0.0:
                 logging.warning("SelfLift H3: rho > 0 with an external upscaler is a hybrid experiment; select upscaler_model=none to test the paper's SelfLift-zero direct route")
             lifter = lambda z, hw: h3_upscaler.learned_latent_lift(z, hw, upscaler_model, force_unload=upscaler_unload)
-        return (progressive_sample(model, positive, negative, vae, latent_image, sampler, sigmas, seed, cfg,
-                                   transition_step, lowres_scale, rho, w_min, w_max, "nearest",
-                                   latent_lifter=lifter, highres_tiling=highres_tiling, model_hires=model_hires,
-                                   highres_tiling_mode=highres_tiling_mode, highres_token_chunk=highres_token_chunk,
-                                   highres_weight_cache_gb=highres_weight_cache_gb),)
+        with corrected_sparse_tokens():
+            return (progressive_sample(model, positive, negative, vae, latent_image, sampler, sigmas, seed, cfg,
+                                       transition_step, lowres_scale, rho, w_min, w_max, "nearest",
+                                       latent_lifter=lifter, highres_tiling=highres_tiling, model_hires=model_hires,
+                                       highres_tiling_mode=highres_tiling_mode, highres_token_chunk=highres_token_chunk,
+                                       highres_weight_cache_gb=highres_weight_cache_gb,
+                                       audio_transition_sync=_has_reference_audio(positive)),)
 
 
 class SelfLiftImageSampler:
